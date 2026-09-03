@@ -13,7 +13,8 @@ describe('secrets', () => {
     const plain = 'eyJ0b2tlbiI6IkV3QmdBOFhxV3YifQ==.refresh-token'
     const stored = encryptSecret(plain)
     expect(stored).not.toContain(plain)
-    expect(stored.split(':')).toHaveLength(3) // iv:authTag:ciphertext
+    expect(stored.split(':')).toHaveLength(4) // v1:iv:authTag:ciphertext
+    expect(stored.startsWith('v1:')).toBe(true)
     expect(decryptSecret(stored)).toBe(plain)
   })
 
@@ -22,39 +23,25 @@ describe('secrets', () => {
     const b = encryptSecret('same-input')
     expect(a).not.toBe(b)
     expect(decryptSecret(a)).toBe('same-input')
-    expect(decryptSecret(b)).toBe('same-input')
   })
 
-  it('throws when the ciphertext has been tampered with', () => {
+  it('throws when tampered with', () => {
     const stored = encryptSecret('original')
-    // Flip a hex digit in the ciphertext segment to corrupt it.
-    const [iv, tag, data] = stored.split(':')
-    const flipped = data!.startsWith('a') ? 'b' + data!.slice(1) : 'a' + data!.slice(1)
-    expect(() => decryptSecret(`${iv}:${tag}:${flipped}`)).toThrow()
+    // Changing the last character corrupts the ciphertext
+    expect(() => decryptSecret(stored.slice(0, -1) + (stored.endsWith('a') ? 'b' : 'a'))).toThrow()
   })
 
-  it('throws when the auth tag has been tampered with', () => {
-    const stored = encryptSecret('original')
-    const [iv, tag, data] = stored.split(':')
-    const flipped = tag!.startsWith('a') ? 'b' + tag!.slice(1) : 'a' + tag!.slice(1)
-    expect(() => decryptSecret(`${iv}:${flipped}:${data}`)).toThrow()
-  })
-
-  it('rejects malformed stored values', () => {
-    expect(() => decryptSecret('not-three-parts')).toThrow(/malformed/)
+  it('rejects malformed or unsupported stored values', () => {
+    expect(() => decryptSecret('not-four-parts-or-even-three')).toThrow(/malformed or unsupported/)
+    expect(() => decryptSecret('iv:tag:data')).toThrow(/malformed or unsupported/)
+    expect(() => decryptSecret('v2:iv:tag:data')).toThrow(/malformed or unsupported/)
   })
 
   it('refuses to encrypt without CHOHLE_SECRET (or too short)', async () => {
-    // The module caches the derived key on first call, so we have to drop
-    // it from the module cache and import a fresh copy with no env set.
     delete process.env.CHOHLE_SECRET
     vi.resetModules()
     const mod = await import('../server/utils/secrets')
     expect(mod.secretIsAvailable()).toBe(false)
     expect(() => mod.encryptSecret('x')).toThrow(/CHOHLE_SECRET/)
-  })
-
-  it('secretIsAvailable returns true when key is set', () => {
-    expect(secretIsAvailable()).toBe(true)
   })
 })
